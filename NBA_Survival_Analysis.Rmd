@@ -459,14 +459,5 @@ resid(noob_lm) %>%
        ylab = "Residuals",
        main = "LM Residuals \nFor Model Censored at t=1")
 abline(a = 0, b= 0)
-
-
-# ## Pois ----
-# vince_pois <- glm(time ~ Rd + Pos + Year, data = vince_train, family = "poisson")
-# vince_train_pois_pred <- predict(vince_lm, type = "response")
-# 
-# # check resids
-# resid(vince_pois) %>% plot
-
 ```
 
