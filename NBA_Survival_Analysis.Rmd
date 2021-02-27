@@ -1,0 +1,472 @@
+---
+title: "PSTAT 175 Final Project"
+author: "Austin Miles"
+date: "10/16/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libs}
+library(tidyverse)
+library(survival)
+library(broom)
+
+theme_set(theme_bw())
+rd_color <- "#56B4E9"
+pos_color <- "#e95684"
+year_color <- "#E69F00"
+```
+
+
+```{r data_prep, eval= F}
+# read in raw data from basketball-reference
+# add columns for Survival time (Yrs) and censoring (event)
+
+
+nbadraft_2009 <- read_csv("nbadraft_2009.csv", col_names = T, skip =1) %>%
+  mutate_if(is.numeric, ~ifelse(is.na(.), 0, .)) %>%
+  mutate(Yrs = To - From + 1,
+         event = ifelse(Yrs < max(Yrs) & G >= 5, 1, 0)
+         )
+
+nbadraft_2003 <- read_csv("nbadraft_2003.csv", col_names = T, skip =1) %>%
+  rename("Pk" = `Pk▲`) %>%
+  mutate_if(is.numeric, ~ifelse(is.na(.), 0, .)) %>%
+  mutate(Yrs = To - From + 1,
+         event = ifelse(Yrs < max(Yrs) & G >= 5, 1, 0)
+         )
+
+nbadraft_1998 <- read_csv("nbadraft_1998.csv", col_names = T, skip =1) %>%
+  mutate_if(is.numeric, ~ifelse(is.na(.), 0, .)) %>%
+  mutate(Yrs = To - From + 1,
+         event = ifelse(Yrs < max(Yrs) & G >= 5, 1, 0)
+         ) %>%
+  select(-"WS/48")
+
+nba_draft <- bind_rows(nbadraft_1998, nbadraft_2003, nbadraft_2009)
+write_csv(nba_draft, "nbadraft_98_03_09.csv")
+
+```
+### DATA EXPLORATION
+```{r data_exploration}
+nba_raw <- read_csv("nbadraft_98_03_09.csv")
+
+# split position into big/small
+nba_draft <- nba_raw %>% 
+  mutate(Pos = fct_collapse(Pos, 
+                            Big = c("C", "C-F", "F", "F-C"), 
+                            Small = c("F-G", "G", "G-F")),
+         Year = as_factor(Year),
+         Rd = as_factor(Rd)) %>%
+  filter(!is.na(Pos))
+
+(rd_dist <- ggplot(data=nba_draft, aes(x=Yrs)) +
+    geom_histogram(fill=rd_color) +
+    facet_grid(Rd~.) +
+    labs(title = "By Round Drafted") + 
+    #ggtitle("Figure 1a. Distribution of Time-to-Event by Round Drafted") +
+    xlab("Years Played in NBA"))
+
+(pos_dist <- ggplot(data=nba_draft, aes(x=Yrs)) +
+    geom_histogram(fill=pos_color) +
+    facet_grid(Pos~.) +
+    labs(title = "By Position") + 
+    #ggtitle("Figure 1b. Distribution of time-to-event by Position") +
+    xlab("Years Played in NBA"))
+
+(year_dist <- ggplot(data=nba_draft, aes(x=Yrs)) +
+    geom_histogram(fill=year_color) +
+    facet_grid(Year~.) +
+    labs(title = "By Year Drafted") + 
+    #ggtitle("Figure 1c. Distribution of time-to-event by year drafted") +
+    xlab("Years Played in NBA"))
+
+#plot_grid(rd_dist, pos_dist, year_dist, nrow = 1, ncol = 3)
+#ggsave("pstat175f_distplot.png")
+```
+
+### KM SURVIVAL CURVES
+```{r}
+## KM survival curves
+
+nbasurv <- with(nba_draft, Surv(Yrs, event))
+
+# KM survival curve
+survfit(nbasurv ~ 1) %>% 
+  plot(main = "KM Survival Curve for NBA Career Length in 1998, 2003, 2009",
+       xlab = "Years Played in NBA",
+       ylab = "KM Survival Probability")
+par(mfrow = c(1,3))
+# KM survival curve by draft round
+survfit(nbasurv ~ Rd, data = nba_draft) %>% 
+  plot(col = c("red", "blue"), 
+       main = "By Round",
+       xlab = "Years Played in NBA",
+       ylab = "KM Survival Probability")
+legend("topright", legend = c("Round 1", "Round 2"),
+       fill = c("red", "blue"))
+
+# KM survival curve by position
+survfit(nbasurv ~ Pos, data = nba_draft) %>% 
+  plot(col = c("red", "blue"), 
+       main = "By Position",
+       xlab = "Years Played in NBA",
+       ylab = "KM Survival Probability")
+legend("topright", legend = c("Big", "Small"),
+       fill = c("red", "blue"))
+
+
+# KM survival curve by draft year
+survfit(nbasurv ~ Year, data = nba_draft) %>% 
+  plot(col = c("red", "blue", "green"), 
+       main = "By Draft Year",
+       xlab = "Years Played in NBA",
+       ylab = "KM Survival Probability")
+legend("topright", legend = c(1998, 2003, 2009),
+       fill = c("red", "blue", "green"))
+
+
+```
+### LOG RANK TEST 
+```{r}
+### Log Rank Test -- are the KM curves different for the groups?
+
+# by draft round - SIG
+survdiff(Surv(Yrs, event) ~ Rd, data= nba_draft)
+
+# by position -- not sig
+survdiff(Surv(Yrs, event) ~ Pos, data= nba_draft)
+
+
+# by Year (1998, 2003, 2009)
+survdiff(Surv(Yrs, event) ~ Year, data= nba_draft)
+```
+
+## COXPH models
+```{r}
+### COxPH models
+
+## Univariate ---------------------------------
+
+# by draft round - SIG
+(rd_cph <- coxph(Surv(Yrs, event) ~ Rd, data= nba_draft))
+# by position -- not sig
+(pos_cph <- coxph(Surv(Yrs, event) ~ Pos, data= nba_draft))
+# by Year (1998, 2003, 2009) -- not sig
+(year_cph <- coxph(Surv(Yrs, event) ~ Year, data= nba_draft))
+
+
+## Full first order model -- sig
+(fst_order_cph <- coxph(Surv(Yrs, event) ~ Pos + Year + Rd, data = nba_draft))
+
+## look at the model iteratively to see what's significant.
+# ORDER 1: order is pos, year, rd. only rd is sig
+anova(fst_order_cph)
+
+# Order 2: oder is year, pos, rd. only rd is sig this way too.
+anova(coxph(Surv(Yrs, event) ~ Year + Pos + Rd, data = nba_draft))
+
+
+# Order 3: oder is rd, pos, year. only rd is sig this way too.
+anova(coxph(Surv(Yrs, event) ~ Rd + Pos + Year, data = nba_draft))
+
+## Compare full model to Rd only model to see if the covariates add anything
+anova(rd_cph, fst_order_cph)
+
+
+## Full second orderm model - full model sig but not individual terms (except round)
+(snd_order_cph <- coxph(Surv(Yrs, event) ~ Pos * Year * Rd, data = nba_draft))
+
+# LRT for comparing whether the interaction model is sig. 
+# It's not
+anova(fst_order_cph, snd_order_cph)
+
+# don't even bother going to 3rd order then.
+
+
+step(fst_order_cph)
+step(snd_order_cph)
+step(snd_order_cph, direction = "both")
+```
+
+
+
+### VALIDATING COXPH ASSUMPTION
+```{r}
+### cloglog plots
+par(mfrow = c(1,3))
+# KM cloglog curve by draft round -- satisfied
+survfit(nbasurv ~ Rd, data = nba_draft) %>% 
+  plot(fun = 'cloglog', col = c("red", "blue"), main = "Cloglog By Round",
+       xlab = "Years played in NBA",
+       ylab = "log(-log(Est. Survival Prob)",
+       ylim = c(-2,2),
+       xlim = c(0.9,25)
+       )
+legend("bottomright", legend = c("Round 1", "Round 2"),
+       fill = c("red", "blue"))
+
+
+# KM cloglog curve by position -- maybe not
+survfit(nbasurv ~ Pos, data = nba_draft) %>% 
+  plot(fun = 'cloglog',col = c("red", "blue"), main = "Cloglog By Position",
+       xlab = "Years played in NBA",
+       ylim = c(-2,2),
+       xlim = c(.9,25))
+legend("bottomright", legend = c("Big", "Small"),
+       fill = c("red", "blue"))
+
+
+# KM cloglog curve by draft year
+survfit(nbasurv ~ Year, data = nba_draft) %>% 
+  plot(fun = 'cloglog', col = c("red", "blue", "green"), main = "Cloglog by Draft Year",
+       xlab = "Years played in NBA",
+       ylim = c(-2,2),
+       xlim = c(0.9,25))
+legend("bottomright", legend = c(1998, 2003, 2009),
+       fill = c("red", "blue", "green"))
+
+
+
+
+#### schoenfeld residuals
+# round - cph satisfied
+cox.zph(rd_cph)
+ 
+# position - cph satisfied
+cox.zph(pos_cph)
+
+# year - cph satisfied
+cox.zph(year_cph)
+
+cox.zph(fst_order_cph)
+```
+
+
+### Parametric models. we use loglogistic bc zero inflated ish
+```{r}
+# by draft round - SIG
+(rd_loglogit <- survreg(Surv(Yrs, event) ~ Rd, data= nba_draft, dist = "loglogistic"))
+summary(rd_loglogit)
+# by position -- not sig
+(pos_loglogit <- survreg(Surv(Yrs, event) ~ Pos, data= nba_draft, dist = "loglogistic"))
+# by Year (1998, 2003, 2009) -- not sig
+(year_loglogit <- survreg(Surv(Yrs, event) ~ Year, data= nba_draft, dist = "loglogistic"))
+
+(full_loglogit <- survreg(Surv(Yrs, event) ~ Year + Rd, data= nba_draft, dist = "loglogistic"))
+summary(full_loglogit)
+
+
+surv_rd <- survfit(nbasurv ~ Rd, data = nba_draft)
+surv_pos <- survfit(nbasurv ~ Pos, data = nba_draft)
+surv_year <- survfit(nbasurv ~ Year, data = nba_draft)
+
+par(mfrow = c(1,3))
+plot(x = log(surv_rd$time), y = log(surv_rd$surv / (1- surv_rd$surv)),
+       col = c("red", "blue"),
+       main = "Survival Log Odds By Draft Round",
+       xlab = "Years played in NBA, log scale",
+       ylab = "Log(Estimated Survival Odds)")
+       #ylim = c(0,5))
+abline(lm(log((surv_rd$surv+.0001) / (1-surv_rd$surv)) ~ log(surv_rd$time)))
+legend("bottomleft", legend = c("Round 1", "Round 2"),
+       fill = c("red", "blue"))
+
+
+
+plot(x = log(surv_pos$time), y = log(surv_pos$surv / (1- surv_pos$surv)),
+     #type = "s",
+     col = c("red", "blue"),
+     main = "Survival Log Odds By Position",
+     xlab = "Years played in NBA, log scale",
+     ylab = "Log(Estimated Survival Odds)")
+       #ylim = c(0,5))
+abline(lm(log((surv_pos$surv+.0001) / (1-surv_pos$surv)) ~ log(surv_pos$time)))
+legend("bottomleft", legend = c("Big", "Small"),
+       fill = c("red", "blue"))
+
+
+plot(x = log(surv_year$time), y = log(surv_year$surv / (1- surv_year$surv)),
+       col = c("red", "blue"),
+       main = "Survival Log Odds By Draft Year",
+       xlab = "Years played in NBA, log scale",
+       ylab = "Log(Estimated Survival Odds)")
+       #ylim = c(0,5))
+abline(lm(log((surv_year$surv+.0001) / (1-surv_year$surv)) ~ log(surv_year$time)))
+legend("bottomleft", legend = c(1998, 2003, 2009),
+       fill = c("red", "blue", "green"))
+
+
+# testing normality of residuals
+lm(log((surv_year$surv+.0001) / (1-surv_year$surv)) ~ log(surv_year$time)) %>% 
+  residuals %>% 
+  shapiro.test()
+
+lm(log((surv_rd$surv+.0001) / (1-surv_rd$surv)) ~ log(surv_rd$time)) %>% 
+  residuals %>% 
+  shapiro.test()
+
+lm(log((surv_pos$surv+.0001) / (1-surv_pos$surv)) ~ log(surv_pos$time)) %>% 
+  residuals %>% 
+  shapiro.test()
+
+```
+
+
+### Alternative modeling -- nested linear regression
+```{r}
+# get data with a time column that doesn't use censoring
+# and arrange by time
+glm_data <- nba_draft %>% 
+  mutate(time = ifelse(event == 0, NA, Yrs)) %>%
+  arrange(desc(Yrs))
+
+
+#' get a subset dataframe with complete data
+#' more efficient would be grouping before to make sure there aren't duplicated
+split_data <- function(data, row_index){
+  # single number with the year of censoring
+  max_year <- data %>% 
+    slice(row_index) %>%
+    pull(Yrs)
+  
+  # create new variable, which is time after censoring. 
+  # this is how we incorporate censoring.
+  train_df <- data %>%
+    filter(!is.na(time)) %>%
+    rowwise() %>%
+    mutate(time_left = max(0,Yrs - max_year)) %>%
+    ungroup()
+  test_row <- data %>% 
+    slice(row_index)
+  
+  list(train_df = train_df, pred_row = test_row)
+}
+
+
+censored_index <- glm_data %>% 
+  pull(time) %>%
+  is.na() %>%
+  which()
+
+split_dfs <- purrr::map(censored_index, ~split_data(glm_data, .x))
+
+
+do_lin_reg <- function(df_list){
+  df <- df_list[[1]]
+  pred_row <- df_list[[2]]
+  
+  # time_left is relative to the censoring year of the pred_row, so make sure to record
+  years_rel <- pred_row %>% pull(Yrs)
+  lin_fit <- lm(time_left ~ Rd + Pos + Year, data = df)
+  fit_coefs <- broom::tidy(lin_fit) %>%
+    mutate(overall_p = broom::glance(lin_fit)$p.value,
+           ref_year = years_rel,
+           weighted_coef = estimate * (1-p.value))
+  
+  # in sampe predictions
+  lm_pred <- predict(lin_fit)
+  # new prediction
+  new_pred <- predict(lin_fit, newdata= pred_row)
+   
+  # rmse (in sample)
+  insample_rmse <- (df$time_left - lm_pred)**2 %>% sqrt %>% mean
+  
+  list(fit = fit_coefs, rmse = insample_rmse, pred = new_pred)
+}
+
+censored_lms <- purrr::map(split_dfs, ~do_lin_reg(.x))
+
+lm_results_df <- purrr::map(censored_lms, ~.x$fit %>% select(term, weighted_coef, p.value)) %>%
+  bind_cols()
+
+weighted_coefs <- lm_results_df %>%
+  mutate(avg_coef = select(., starts_with("weighted_coef")) %>% rowMeans(na.rm = T),
+         avg_bh_p = select(., starts_with("p.value")) %>% rowMeans(na.rm = T) %>% p.adjust(method = "BH")) %>%
+  select(term, avg_coef, avg_bh_p) %>%
+  filter(term != "(Intercept)")
+
+
+rmses <- purrr::map_df(censored_lms, ~tibble(ref_year = .x[[1]]$ref_year, rmse = .x$rmse, overall_p = .x[[1]]$overall_p %>% p.adjust(method = "BH"))) %>%
+  distinct
+
+
+ggplot(data = rmses) + 
+  geom_col(aes(x = ref_year, y = rmse))
+  
+```
+### Checking lm assumptions
+```{r}
+# to see validity of lm assumptions, can do quick check of a few different possible ways the data can look
+# case 1: look at how resids look for oldest censored player (vince)
+vince_train <- split_dfs[[1]][[1]]
+vince_row <- split_dfs[[1]][[2]]
+vince_lm <- lm(time_left ~ Rd + Pos + Year, data = vince_train)
+vince_train_lm_pred <- predict(vince_lm)
+predict(vince_lm, newdata =vince_row)
+
+# in sample rmse
+(vince_train$time_left - vince_train_lm_pred)**2 %>% sqrt %>% mean
+# check resids
+resid(vince_lm) %>% plot
+
+
+# someone who was in the middle of the censored times
+# case 1: look at how resids look for oldest censored player (vince)
+mid_train <- split_dfs[[14]][[1]]
+mid_row <- split_dfs[[14]][[2]]
+mid_lm <- lm(time_left ~ Rd + Pos + Year, data = mid_train)
+mid_train_lm_pred <- predict(mid_lm)
+predict(mid_lm, newdata =mid_row)
+
+# in sample rmse
+(mid_train$time_left - mid_train_lm_pred)**2 %>% sqrt %>% mean
+# check resids
+resid(mid_lm) %>% plot
+
+## player who didn't make it to their second year.
+noob_train <- split_dfs[[length(split_dfs)]][[1]]
+noob_row <- split_dfs[[length(split_dfs)]][[2]]
+noob_lm <- lm(time_left ~ Rd + Pos + Year, data = noob_train)
+noob_train_lm_pred <- predict(noob_lm)
+predict(noob_lm, newdata =noob_row)
+
+# in sample rmse
+(noob_train$time_left - noob_train_lm_pred)**2 %>% sqrt %>% mean
+# check resids
+resid(noob_lm) %>% plot
+
+
+par(mfrow = c(1,3))
+
+resid(vince_lm) %>% 
+  plot(xlab = "Index",
+       ylab = "Residuals",
+       main = "LM Residuals \nFor Model Censored at t=22")
+abline(a = 0, b= 0)
+
+resid(mid_lm) %>% 
+  plot(xlab = "Index",
+       ylab = "Residuals",
+       main = "LM Residuals \nFor Model Censored at t=11")
+abline(a = 0, b= 0)
+
+resid(noob_lm) %>% 
+  plot(xlab = "Index",
+       ylab = "Residuals",
+       main = "LM Residuals \nFor Model Censored at t=1")
+abline(a = 0, b= 0)
+
+
+# ## Pois ----
+# vince_pois <- glm(time ~ Rd + Pos + Year, data = vince_train, family = "poisson")
+# vince_train_pois_pred <- predict(vince_lm, type = "response")
+# 
+# # check resids
+# resid(vince_pois) %>% plot
+
+```
+
